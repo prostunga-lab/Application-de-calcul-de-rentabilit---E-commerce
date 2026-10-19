@@ -24,7 +24,8 @@ input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid 
 .right{display:flex;flex-direction:column;gap:16px;min-width:0} #out{display:flex;flex-direction:column;gap:16px;min-width:0}
 .scenbar{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.2fr) auto;gap:12px;align-items:end}
 @media(max-width:700px){.scenbar{grid-template-columns:1fr}}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px} .scenbar .row{margin:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center} .scenbar .row{margin:0} #bkmsg{font-size:12px}
+input[type=file]{padding:5px}
 button{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer}
 button:hover{border-color:var(--accent)} button.danger{color:var(--bad)}
 .tabs{display:flex;gap:6px;margin-top:16px;overflow-x:auto}

@@ -150,7 +150,12 @@
         '<label>Dépense pub (€)<input id="tspend" type="number" inputmode="decimal" step="any" min="0"></label>' +
         '<label>Commandes<input id="torders" type="number" inputmode="numeric" step="1" min="0"></label>' +
         '<label>Chiffre d’affaires TTC (€)<input id="trev" type="number" inputmode="decimal" step="any" min="0"></label></div>' +
-        '<div class="row"><button id="tadd" type="button">Ajouter</button></div><p id="tmsg" class="note"></p>';
+        '<div class="row"><button id="tadd" type="button">Ajouter</button></div><p id="tmsg" class="note"></p>' +
+        '<h2>Importer des exports CSV</h2><div class="grid">' +
+        '<label>Commandes Shopify (CSV)<input id="fshop" type="file" accept=".csv,text/csv"></label>' +
+        '<label>Rapport Meta Ads par jour (CSV)<input id="fmeta" type="file" accept=".csv,text/csv"></label></div>' +
+        '<div id="impprev" class="note"></div><div class="row"><button id="impgo" type="button" disabled>Importer dans le suivi</button></div>' +
+        '<p class="note">Les fichiers sont lus dans votre navigateur et ne sont pas envoyés ailleurs. Seuls les totaux par jour sont conservés, aucun nom ni e-mail de client.</p>';
     } else if (db.tab === 'compare') {
       if (!db.cmp.length) db.cmp = db.items.slice(0, 4).map(function (x) { return x.id; });
       h = '<h2>Produits à comparer (4 maximum)</h2><div class="checks">' + db.items.map(function (x) {
@@ -170,6 +175,7 @@
       save(); ['tspend', 'torders', 'trev'].forEach(function (id) { $(id).value = ''; });
       $('tmsg').textContent = 'Journée ajoutée.'; render();
     };
+    if ($('fshop')) wireImport();
     ctl.querySelectorAll('[data-cmp]').forEach(function (c) {
       c.onchange = function () {
         var on = ctl.querySelectorAll('[data-cmp]:checked');
@@ -178,6 +184,88 @@
       };
     });
   }
+
+  /* ---------- Import CSV (Shopify, Meta Ads) ---------- */
+  var imp = { shopify: null, meta: null };
+  function readFile(file, cb) {
+    var r = new FileReader();
+    r.onload = function () { cb(String(r.result)); };
+    r.onerror = function () { cb(null); };
+    r.readAsText(file);
+  }
+  function fmtDay(d) { return d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-BE') : '—'; }
+  function describe(label, r) {
+    if (r.error) return '<b class="neg">' + label + ' : ' + esc(r.error) + '</b>';
+    var t = r.totals, line = '<b>' + label + '</b> : ' + r.days + ' jour' + (r.days > 1 ? 's' : '') + ' du ' + fmtDay(r.from) + ' au ' + fmtDay(r.to);
+    if (r.source === 'shopify') line += ', ' + num(t.orders, 0) + ' commandes, ' + eur0(t.revenue) + ' TTC';
+    else line += ', ' + eur0(t.spend) + ' dépensés';
+    var sk = r.skipped || {};
+    if (sk.cancelled || sk.refunded) line += ' (ignorées : ' + (sk.cancelled || 0) + ' annulées, ' + (sk.refunded || 0) + ' remboursées en totalité)';
+    return line + (r.warnings || []).map(function (w) { return ' ' + esc(w); }).join('');
+  }
+  function refreshImport() {
+    var parts = [], ok = false;
+    if (imp.shopify) { parts.push(describe('Shopify', imp.shopify)); ok = ok || !imp.shopify.error && imp.shopify.days > 0; }
+    if (imp.meta) {
+      parts.push(describe('Meta Ads', imp.meta)); ok = ok || !imp.meta.error && imp.meta.days > 0;
+      if (!imp.meta.error && !(imp.shopify && !imp.shopify.error) && imp.meta.hasPurchases)
+        parts.push('Sans fichier Shopify, les achats et la valeur déclarés par Meta serviront de commandes et de chiffre d’affaires.');
+    }
+    $('impprev').innerHTML = parts.join('<br>');
+    $('impgo').disabled = !ok;
+  }
+  function wireImport() {
+    imp = { shopify: null, meta: null };
+    [['fshop', 'shopify'], ['fmeta', 'meta']].forEach(function (p) {
+      $(p[0]).onchange = function () {
+        var f = $(p[0]).files[0];
+        if (!f) { imp[p[1]] = null; refreshImport(); return; }
+        readFile(f, function (txt) {
+          imp[p[1]] = txt === null ? { error: 'lecture impossible.' } : DropImport[p[1]](txt);
+          refreshImport();
+        });
+      };
+    });
+    $('impgo').onclick = function () {
+      var list = [], shopOk = imp.shopify && !imp.shopify.error && imp.shopify.days > 0;
+      if (shopOk) list.push(imp.shopify);
+      if (imp.meta && !imp.meta.error && imp.meta.days > 0) { imp.meta.usePurchases = !shopOk && imp.meta.hasPurchases; list.push(imp.meta); }
+      if (!list.length) return;
+      var res = DropImport.mergeIntoLog(cur().log, list, uid);
+      cur().log = res.log; save();
+      $('impprev').innerHTML = '<b class="pos">Import terminé : ' + res.added + ' journée(s) ajoutée(s), ' + res.updated + ' mise(s) à jour.</b>';
+      $('impgo').disabled = true; $('fshop').value = ''; $('fmeta').value = ''; imp = { shopify: null, meta: null };
+      render();
+    };
+  }
+
+  /* ---------- Sauvegarde JSON (passer d'un appareil à l'autre sans compte) ---------- */
+  function backupMsg(t, bad) { var m = $('bkmsg'); m.textContent = t; m.className = bad ? 'neg' : 'pos'; }
+  /*BK*/
+  $('bkexp').onclick = function () {
+    var blob = new Blob([JSON.stringify({ app: 'rentabilite', version: 2, items: db.items }, null, 1)], { type: 'application/json' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'rentabilite-sauvegarde.json'; a.click();
+    backupMsg('Sauvegarde exportée (' + db.items.length + ' produit(s)).');
+  };
+  /*ENDBK*/
+  $('bkimp').onclick = function () { $('bkfile').click(); };
+  $('bkfile').onchange = function () {
+    var f = $('bkfile').files[0]; if (!f) return;
+    readFile(f, function (txt) {
+      var d; try { d = JSON.parse(txt); } catch (e) { d = null; }
+      $('bkfile').value = '';
+      if (!d || !Array.isArray(d.items) || !d.items.length || d.items.some(function (x) { return !x || typeof x.inputs !== 'object' || x.inputs === null; })) {
+        backupMsg('Fichier de sauvegarde non reconnu.', true); return;
+      }
+      d.items.forEach(function (x) {
+        db.items.push({ id: uid(), name: String(x.name || 'Produit importé').slice(0, 60), inputs: Object.assign(fresh(), x.inputs),
+          log: (Array.isArray(x.log) ? x.log : []).filter(function (e) { return e && /^\d{4}-\d{2}-\d{2}$/.test(e.date); })
+            .map(function (e) { return { id: uid(), date: e.date, spend: +e.spend || 0, orders: +e.orders || 0, revenue: +e.revenue || 0 }; }) });
+      });
+      save(); switchTo(db.current);
+      backupMsg(d.items.length + ' produit(s) ajouté(s) à votre liste.');
+    });
+  };
 
   /* ---------- Rendu ---------- */
   function render() {

@@ -26,11 +26,13 @@ jobs:
         with:
           node-version: 20
       - name: Tests du moteur de calcul
-        run: node calc.test.js
+        run: |
+          node calc.test.js
+          node importer.test.js
       - name: Préparation du site
         run: |
           mkdir _site
-          cp -r index.html style.css calc.js app.js sw.js manifest.webmanifest icons _site/
+          cp -r index.html style.css calc.js importer.js app.js sw.js manifest.webmanifest icons _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

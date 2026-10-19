@@ -9,6 +9,8 @@ Application web sans serveur ni dépendance, pour mesurer la rentabilité d'une 
 - **Mise à l'échelle** : courbe du bénéfice selon le budget quotidien avec hausse du CPA paramétrable.
 - **Comparer** : jusqu'à 4 produits côte à côte, meilleure valeur surlignée.
 - **Suivi** : saisie jour par jour de la dépense pub, des commandes et du chiffre d'affaires, comparée au plan (CPA, ROAS, résultat), avec reprise du CPA réel dans les hypothèses.
+- **Import CSV** dans le Suivi : export des commandes Shopify (Commandes → Exporter) et rapport Meta Ads ventilé par « Jour » (colonne « Montant dépensé »). Annulations et remboursements totaux exclus, remboursements partiels déduits. Lecture locale, seuls les totaux par jour sont conservés.
+- **Sauvegarde / restauration JSON** de tous les produits et de leur suivi, pour passer d'un appareil à l'autre sans compte.
 - **Coûts détaillés** : litiges (chargebacks) et leurs frais, frais de retour, TVA par pays (taux normaux indicatifs).
 - **Export** PDF (impression) et CSV.
 - **Installable** sur téléphone et ordinateur (PWA) et utilisable hors ligne.
@@ -21,5 +23,5 @@ L'installation et le mode hors ligne demandent une adresse `https://` (ou `local
 Activez **Settings → Pages → Source : GitHub Actions** : chaque push sur `main` lance les tests puis publie le site (`.github/workflows/pages.yml`).
 
 ## Développement
-- `calc.js` : moteur de calcul (fonctions pures). `node calc.test.js` lance les tests.
+- `calc.js` : moteur de calcul (fonctions pures). `node calc.test.js` et `node importer.test.js` lancent les tests (`importer.js` : lecture des CSV Shopify et Meta).
 - `app.js`, `style.css`, `index.html` : interface. `sw.js` et `manifest.webmanifest` : PWA. Si vous modifiez les fichiers, changez le numéro de `CACHE` dans `sw.js` pour forcer la mise à jour.

@@ -24,6 +24,10 @@
     <button id="bnew" type="button">Nouveau</button>
     <button id="bdup" type="button">Dupliquer</button>
     <button id="bdel" type="button">Supprimer</button>
+    <button id="bkexp" type="button" title="Télécharger tous vos produits dans un fichier">Sauvegarder</button>
+    <button id="bkimp" type="button" title="Ajouter les produits d'un fichier de sauvegarde">Restaurer</button>
+    <input id="bkfile" type="file" accept=".json,application/json" hidden>
+    <span id="bkmsg" role="status"></span>
   </div>
 </section>
 
@@ -46,6 +50,7 @@
 </main>
 
 <script src="calc.js"></script>
+<script src="importer.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
