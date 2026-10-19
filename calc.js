@@ -6,14 +6,20 @@
     payPct: 2.9, payFixed: 0.3, platformPct: 0,
     refundRate: 5, costRecovery: 0,
     adMode: 'funnel', cpm: 10, ctr: 1.5, cvr: 3, cpaDirect: 22,
-    dailyBudget: 100, days: 30, fixedMonthly: 80, taxRate: 0
+    dailyBudget: 100, days: 30, fixedMonthly: 80, taxRate: 0,
+    cpaGrowth: 20, cpaMult: 1
   };
 
   function n(v) { v = Number(v); return isFinite(v) ? v : 0; }
 
-  function compute(inp) {
+  function merge(inp) {
     var i = {}, k;
     for (k in DEFAULTS) i[k] = (inp && inp[k] !== undefined) ? inp[k] : DEFAULTS[k];
+    return i;
+  }
+
+  function compute(inp) {
+    var i = merge(inp);
     var vat = n(i.vat) / 100;
     var revTTC = n(i.priceTTC) + n(i.shippingCharged);
     var revHT = revTTC / (1 + vat);
@@ -37,6 +43,9 @@
       cpc = ctr > 0 ? n(i.cpm) / (1000 * ctr) : Infinity;
       cpa = cvr > 0 ? cpc / cvr : Infinity;
     }
+
+    // cpaMult sert à simuler la hausse du CPA quand le budget augmente.
+    cpa = cpa * n(i.cpaMult);
 
     var profitPerOrder = contribution - cpa;
     var beRoas = contribution > 0 ? revTTC / contribution : Infinity;
@@ -65,7 +74,48 @@
     };
   }
 
-  var api = { DEFAULTS: DEFAULTS, compute: compute };
+  // Objectif : commandes, budget et chiffre d'affaires nécessaires pour un bénéfice net mensuel visé.
+  function reverse(inp, targetNet) {
+    var i = merge(inp), r = compute(inp), u = r.profitPerOrder;
+    if (!(u > 0) || !isFinite(u)) return { feasible: false, unit: u };
+    var t = Math.min(n(i.taxRate) / 100, 0.99);
+    var pre = n(targetNet) > 0 ? n(targetNet) / (1 - t) : n(targetNet);
+    var orders = Math.max(0, (pre + n(i.fixedMonthly)) / u);
+    var spend = orders * r.cpa, days = n(i.days) || 1;
+    return { feasible: true, unit: u, orders: orders, ordersPerDay: orders / days, spend: spend,
+      dailyBudget: spend / days, revenueTTC: orders * r.revTTC };
+  }
+
+  // Prix TTC minimal pour une marge nette visée par commande (CPA supposé constant).
+  function minPrice(inp, marginPct) {
+    var i = merge(inp), r = compute(inp), v = n(i.vat) / 100, ref = n(i.refundRate) / 100,
+        rec = n(i.costRecovery) / 100, m = n(marginPct) / 100;
+    var k = (1 - ref) / (1 + v) - n(i.payPct) / 100 - n(i.platformPct) / 100 - m / (1 + v);
+    var costs = (n(i.productCost) + n(i.supplierShipping)) * (1 - ref * rec) + n(i.payFixed) + n(i.otherPerOrder) + r.cpa;
+    if (!(k > 0) || !isFinite(costs)) return null;
+    return costs / k - n(i.shippingCharged);
+  }
+
+  // CPA maximal pour garder une marge nette visée par commande.
+  function maxCpa(inp, marginPct) {
+    var r = compute(inp);
+    return r.contribution - n(marginPct) / 100 * r.revHT;
+  }
+
+  // Bénéfice selon le budget : le CPA est multiplié par mult^e, avec e = log2(1 + hausse à chaque doublement).
+  function scaleCurve(inp, mults) {
+    var i = merge(inp), e = Math.log(1 + n(i.cpaGrowth) / 100) / Math.LN2;
+    return mults.map(function (m) {
+      var x = {}, k;
+      for (k in i) x[k] = i[k];
+      x.dailyBudget = n(i.dailyBudget) * m;
+      x.cpaMult = Math.pow(m, e);
+      var r = compute(x);
+      return { mult: m, daily: x.dailyBudget, cpa: r.cpa, orders: r.orders, roas: r.roas, net: r.net };
+    });
+  }
+
+  var api = { DEFAULTS: DEFAULTS, compute: compute, reverse: reverse, minPrice: minPrice, maxCpa: maxCpa, scaleCurve: scaleCurve };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DropCalc = api;
 })(typeof window !== 'undefined' ? window : this);
