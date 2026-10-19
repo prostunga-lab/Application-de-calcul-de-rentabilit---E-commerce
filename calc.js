@@ -7,7 +7,8 @@
     refundRate: 5, costRecovery: 0,
     adMode: 'funnel', cpm: 10, ctr: 1.5, cvr: 3, cpaDirect: 22,
     dailyBudget: 100, days: 30, fixedMonthly: 80, taxRate: 0,
-    cpaGrowth: 20, cpaMult: 1
+    cpaGrowth: 20, cpaMult: 1,
+    chargebackRate: 0, chargebackFee: 15, returnShipping: 0
   };
 
   function n(v) { v = Number(v); return isFinite(v) ? v : 0; }
@@ -24,14 +25,16 @@
     var revTTC = n(i.priceTTC) + n(i.shippingCharged);
     var revHT = revTTC / (1 + vat);
     var refund = n(i.refundRate) / 100;
+    var cb = n(i.chargebackRate) / 100;
     var recov = n(i.costRecovery) / 100;
 
-    var netRevenue = revHT * (1 - refund);
+    // Remboursements et litiges (chargebacks) : le chiffre d'affaires est perdu, le produit n'est pas récupéré par défaut.
+    var netRevenue = revHT * (1 - refund - cb);
     var productCosts = (n(i.productCost) + n(i.supplierShipping)) * (1 - refund * recov);
     // Les frais de paiement ne sont pas remboursés lors d'un remboursement client.
     var payFees = n(i.payPct) / 100 * revTTC + n(i.payFixed);
     var platformFees = n(i.platformPct) / 100 * revTTC;
-    var other = n(i.otherPerOrder);
+    var other = n(i.otherPerOrder) + cb * n(i.chargebackFee) + refund * n(i.returnShipping);
 
     var contribution = netRevenue - productCosts - payFees - platformFees - other;
 
@@ -90,8 +93,9 @@
   function minPrice(inp, marginPct) {
     var i = merge(inp), r = compute(inp), v = n(i.vat) / 100, ref = n(i.refundRate) / 100,
         rec = n(i.costRecovery) / 100, m = n(marginPct) / 100;
-    var k = (1 - ref) / (1 + v) - n(i.payPct) / 100 - n(i.platformPct) / 100 - m / (1 + v);
-    var costs = (n(i.productCost) + n(i.supplierShipping)) * (1 - ref * rec) + n(i.payFixed) + n(i.otherPerOrder) + r.cpa;
+    var cb = n(i.chargebackRate) / 100;
+    var k = (1 - ref - cb) / (1 + v) - n(i.payPct) / 100 - n(i.platformPct) / 100 - m / (1 + v);
+    var costs = (n(i.productCost) + n(i.supplierShipping)) * (1 - ref * rec) + n(i.payFixed) + n(i.otherPerOrder) + cb * n(i.chargebackFee) + ref * n(i.returnShipping) + r.cpa;
     if (!(k > 0) || !isFinite(costs)) return null;
     return costs / k - n(i.shippingCharged);
   }
@@ -115,7 +119,27 @@
     });
   }
 
-  var api = { DEFAULTS: DEFAULTS, compute: compute, reverse: reverse, minPrice: minPrice, maxCpa: maxCpa, scaleCurve: scaleCurve };
+  // Suivi : compare les chiffres saisis jour par jour au plan (même nombre de jours). Résultats avant impôt.
+  function tracking(inp, log) {
+    var i = merge(inp), r = compute(inp), rows = log || [], dates = {}, spend = 0, orders = 0, rev = 0;
+    rows.forEach(function (e) { spend += n(e.spend); orders += n(e.orders); rev += n(e.revenue); dates[e.date || ''] = 1; });
+    var d = Object.keys(dates).length, days = n(i.days) || 1;
+    var fSpend = n(i.dailyBudget) * d, fOrders = r.orders / days * d, fFixed = n(i.fixedMonthly) * d / days;
+    var aov = orders > 0 ? rev / orders : r.revTTC;
+    var x = {}, k;
+    for (k in i) x[k] = i[k];
+    x.priceTTC = Math.max(0, aov - n(i.shippingCharged));
+    var aContribution = compute(x).contribution;
+    return {
+      days: d, count: rows.length, spend: spend, orders: orders, revenue: rev, aov: aov,
+      cpa: orders > 0 ? spend / orders : Infinity, roas: spend > 0 ? rev / spend : 0,
+      net: orders * aContribution - spend - fFixed,
+      forecast: { spend: fSpend, orders: fOrders, cpa: r.cpa, roas: r.roas, revenue: fOrders * r.revTTC,
+        net: fOrders * r.contribution - fSpend - fFixed }
+    };
+  }
+
+  var api = { tracking: tracking, DEFAULTS: DEFAULTS, compute: compute, reverse: reverse, minPrice: minPrice, maxCpa: maxCpa, scaleCurve: scaleCurve };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DropCalc = api;
 })(typeof window !== 'undefined' ? window : this);

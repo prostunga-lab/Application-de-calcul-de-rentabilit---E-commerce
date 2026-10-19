@@ -1,5 +1,5 @@
 /* Fonctionnement hors ligne : les fichiers de l'application sont mis en cache à l'installation. */
-const CACHE = 'rentabilite-v3';
+const CACHE = 'rentabilite-v4';
 const FILES = ['./', 'index.html', 'style.css', 'calc.js', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(

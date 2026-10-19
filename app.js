@@ -2,7 +2,10 @@
   'use strict';
   var D = DropCalc.DEFAULTS, C = DropCalc.compute;
   var KEY = 'rentab.v2', OLD = 'dropcalc.v1';
-  var GOAL = { goalNet: 1000, goalMargin: 20 };
+  var GOAL = { goalNet: 1000, goalMargin: 20, country: 'BE' };
+  // Taux normaux de TVA à titre indicatif (à vérifier avant usage).
+  var VAT = { BE: ['Belgique', 21], FR: ['France', 20], NL: ['Pays-Bas', 21], DE: ['Allemagne', 19], LU: ['Luxembourg', 17],
+    ES: ['Espagne', 21], IT: ['Italie', 22], PT: ['Portugal', 23], AT: ['Autriche', 20], IE: ['Irlande', 23], PL: ['Pologne', 23], XX: ['Autre', null] };
 
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -24,9 +27,10 @@
     var inputs = fresh();
     try { Object.assign(inputs, JSON.parse(localStorage.getItem(OLD) || '{}')); } catch (e) {}
     var id = uid();
-    return { current: id, tab: 'calc', cmp: [], items: [{ id: id, name: 'Produit 1', inputs: inputs }] };
+    return { current: id, tab: 'calc', cmp: [], items: [{ id: id, name: 'Produit 1', inputs: inputs, log: [] }] };
   }
   var db = load();
+  db.items.forEach(function (x) { x.inputs = Object.assign(fresh(), x.inputs); x.log = x.log || []; });
   if (!db.items.some(function (x) { return x.id === db.current; })) db.current = db.items[0].id;
   function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
   function cur() { return db.items.filter(function (x) { return x.id === db.current; })[0] || db.items[0]; }
@@ -35,10 +39,14 @@
   /* ---------- Formulaire d'hypothèses ---------- */
   var FIELDS = [
     ['Produit & prix', [
+      ['country', 'Pays de vente (TVA)', 'country'],
       ['priceTTC', 'Prix de vente TTC (€)'], ['shippingCharged', 'Livraison facturée TTC (€)'],
       ['vat', 'TVA (%)'], ['refundRate', 'Remboursements / retours (%)'],
       ['productCost', 'Coût produit fournisseur (€)'], ['supplierShipping', 'Livraison fournisseur (€)'],
       ['costRecovery', 'Coût récupéré sur retours (%)'], ['otherPerOrder', 'Autres coûts / commande (€)']]],
+    ['Litiges & retours', [
+      ['chargebackRate', 'Litiges (chargebacks) (% des commandes)'], ['chargebackFee', 'Frais par litige (€)'],
+      ['returnShipping', 'Frais de retour par remboursement (€)']]],
     ['Frais de paiement & plateforme', [
       ['payPct', 'Paiement : % du TTC'], ['payFixed', 'Paiement : fixe / transaction (€)'],
       ['platformPct', 'Commission boutique (% du TTC)']]],
@@ -54,6 +62,8 @@
   function buildInputs() {
     var html = FIELDS.map(function (g) {
       return '<h2>' + g[0] + '</h2><div class="grid">' + g[1].map(function (f) {
+        if (f[2] === 'country') return '<label class="full">' + f[1] + '<select data-k="country">' + Object.keys(VAT).map(function (c) {
+          return '<option value="' + c + '">' + VAT[c][0] + (VAT[c][1] === null ? '' : ' (' + VAT[c][1] + ' %)') + '</option>'; }).join('') + '</select></label>';
         if (f[2] === 'select') return '<label class="full">' + f[1] + '<select data-k="' + f[0] + '">' +
           '<option value="funnel">Entonnoir (CPM, CTR, conversion)</option><option value="direct">CPA saisi directement</option></select></label>';
         return '<label data-mode="' + (f[2] || '') + '">' + f[1] + '<input type="number" inputmode="decimal" step="any" data-k="' + f[0] + '"></label>';
@@ -66,13 +76,17 @@
     $('reset').onclick = function () { cur().inputs = fresh(); save(); syncValues($('inputs')); buildTab(); render(); };
   }
   function syncValues(root) {
-    var s = S();
-    root.querySelectorAll('[data-k]').forEach(function (el) { el.value = s[el.dataset.k]; });
+    var s = Object.assign(fresh(), S());
+    root.querySelectorAll('[data-k]').forEach(function (el) {
+      el.value = s[el.dataset.k];
+      if (el.tagName === 'SELECT' && el.selectedIndex < 0) el.selectedIndex = 0;
+    });
   }
   document.addEventListener('input', function (e) {
     var el = e.target, k = el.dataset && el.dataset.k;
     if (!k) return;
     S()[k] = el.tagName === 'SELECT' ? el.value : (el.value === '' || isNaN(parseFloat(el.value)) ? 0 : parseFloat(el.value));
+    if (k === 'country' && VAT[el.value] && VAT[el.value][1] !== null) { S().vat = VAT[el.value][1]; syncValues($('inputs')); }
     save(); render();
   });
 
@@ -92,10 +106,10 @@
     renderPrintHead(); if (db.tab === 'compare') render();
   };
   $('bnew').onclick = function () {
-    var id = uid(); db.items.push({ id: id, name: 'Produit ' + (db.items.length + 1), inputs: fresh() }); switchTo(id);
+    var id = uid(); db.items.push({ id: id, name: 'Produit ' + (db.items.length + 1), inputs: fresh(), log: [] }); switchTo(id);
   };
   $('bdup').onclick = function () {
-    var id = uid(); db.items.push({ id: id, name: (cur().name || 'Produit') + ' (copie)', inputs: Object.assign({}, S()) }); switchTo(id);
+    var id = uid(); db.items.push({ id: id, name: (cur().name || 'Produit') + ' (copie)', inputs: Object.assign({}, S()), log: [] }); switchTo(id);
   };
   var delTimer;
   $('bdel').onclick = function () {
@@ -130,6 +144,13 @@
       h = '<h2>Hypothèse de mise à l’échelle</h2><div class="grid">' +
         '<label class="full">Hausse du CPA quand le budget double (%)<input type="number" inputmode="decimal" step="any" data-k="cpaGrowth"></label></div>' +
         '<p class="note">Plus on dépense, plus Meta doit chercher loin : le CPA monte. 20 % signifie qu’en doublant le budget, chaque commande coûte 20 % de plus.</p>';
+    } else if (db.tab === 'track') {
+      h = '<h2>Saisir une journée</h2><div class="grid">' +
+        '<label>Date<input id="tdate" type="date" value="' + today() + '"></label>' +
+        '<label>Dépense pub (€)<input id="tspend" type="number" inputmode="decimal" step="any" min="0"></label>' +
+        '<label>Commandes<input id="torders" type="number" inputmode="numeric" step="1" min="0"></label>' +
+        '<label>Chiffre d’affaires TTC (€)<input id="trev" type="number" inputmode="decimal" step="any" min="0"></label></div>' +
+        '<div class="row"><button id="tadd" type="button">Ajouter</button></div><p id="tmsg" class="note"></p>';
     } else if (db.tab === 'compare') {
       if (!db.cmp.length) db.cmp = db.items.slice(0, 4).map(function (x) { return x.id; });
       h = '<h2>Produits à comparer (4 maximum)</h2><div class="checks">' + db.items.map(function (x) {
@@ -138,6 +159,17 @@
     }
     ctl.hidden = !h; ctl.innerHTML = h;
     if (h) syncValues(ctl);
+    var add = $('tadd');
+    if (add) add.onclick = function () {
+      var v = function (id) { return parseFloat($(id).value); }, sp = v('tspend'), od = v('torders'), rv = v('trev');
+      if (!$('tdate').value || isNaN(sp) || isNaN(od) || isNaN(rv) || sp < 0 || od < 0 || rv < 0) {
+        $('tmsg').textContent = 'Renseignez la date, la dépense, les commandes et le chiffre d’affaires (valeurs positives ou nulles).'; return;
+      }
+      cur().log.push({ id: uid(), date: $('tdate').value, spend: sp, orders: od, revenue: rv });
+      cur().log.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+      save(); ['tspend', 'torders', 'trev'].forEach(function (id) { $(id).value = ''; });
+      $('tmsg').textContent = 'Journée ajoutée.'; render();
+    };
     ctl.querySelectorAll('[data-cmp]').forEach(function (c) {
       c.onchange = function () {
         var on = ctl.querySelectorAll('[data-cmp]:checked');
@@ -156,16 +188,26 @@
     var out = $('out');
     if (db.tab === 'goal') out.innerHTML = goalView();
     else if (db.tab === 'scale') out.innerHTML = scaleView();
+    else if (db.tab === 'track') out.innerHTML = trackView();
     else if (db.tab === 'compare') out.innerHTML = compareView();
     else out.innerHTML = calcView();
     wireActions();
   }
   function renderPrintHead() {
-    var t = { calc: 'Calculateur', goal: 'Objectif', scale: 'Mise à l’échelle', compare: 'Comparaison' }[db.tab];
+    var t = { calc: 'Calculateur', goal: 'Objectif', scale: 'Mise à l’échelle', track: 'Suivi', compare: 'Comparaison' }[db.tab];
     $('printhead').innerHTML = '<b>Calcul rentabilité E-commerce et Meta ads</b> — ' + esc(cur().name || '') + ' — ' + t + ' — ' +
       new Date().toLocaleDateString('fr-BE');
   }
   function wireActions() {
+    document.querySelectorAll('[data-del]').forEach(function (b) {
+      b.onclick = function () { cur().log = cur().log.filter(function (e) { return e.id !== b.dataset.del; }); save(); render(); };
+    });
+    var uc = $('usecpa');
+    if (uc) uc.onclick = function () {
+      var t = DropCalc.tracking(S(), cur().log);
+      if (!isFinite(t.cpa)) return;
+      S().adMode = 'direct'; S().cpaDirect = +t.cpa.toFixed(2); save(); syncValues($('inputs')); render();
+    };
     var p = $('pdf'), c = $('csv');
     if (p) p.onclick = function () { window.print(); };
     if (c) c.onclick = exportCsv;
@@ -189,10 +231,10 @@
       '<section class="card"><h2>Où va chaque euro encaissé (HT)</h2>' + breakdown(r) + '</section>' +
       '<section class="card"><h2>Économie unitaire (par commande)</h2><table>' +
       tr('Encaissé TTC', eur(r.revTTC)) + tr('Chiffre d’affaires HT', eur(r.revHT)) +
-      tr('Remboursements (' + num(s.refundRate) + ' %)', minus(r.revHT - r.netRevenue)) +
+      tr('Remboursements et litiges (' + num(+s.refundRate + +s.chargebackRate) + ' %)', minus(r.revHT - r.netRevenue)) +
       tr('Coût produit + livraison fournisseur', minus(r.productCosts)) +
       tr('Frais de paiement', minus(r.payFees)) + tr('Commission boutique', minus(r.platformFees)) +
-      tr('Autres coûts', minus(r.other)) +
+      tr('Autres coûts (dont litiges et retours)', minus(r.other)) +
       '<tr><th>Marge avant pub (' + pct(r.contributionPct) + ')</th><th class="' + cls(r.contribution) + '">' + eur(r.contribution) + '</th></tr>' +
       tr('Coût d’acquisition Meta (CPA)', minus(r.cpa)) + (r.cpc !== null ? tr('dont coût par clic (CPC)', eur(r.cpc)) : '') +
       '<tr><th>Bénéfice par commande</th><th class="' + cls(r.profitPerOrder) + '">' + eur(r.profitPerOrder) + '</th></tr></table></section>' +
@@ -209,7 +251,7 @@
   function breakdown(r) {
     if (!isFinite(r.cpa)) return '<p class="note">Le CPA est infini (conversion ou CTR à zéro) : renseignez-les pour voir la répartition.</p>';
     var seg = [
-      ['Remboursements', r.revHT - r.netRevenue, 's-refund'], ['Produit + livraison', r.productCosts, 's-prod'],
+      ['Remboursements et litiges', r.revHT - r.netRevenue, 's-refund'], ['Produit + livraison', r.productCosts, 's-prod'],
       ['Frais et autres coûts', r.payFees + r.platformFees + r.other, 's-fees'], ['Publicité Meta', r.cpa, 's-ads'],
       ['Bénéfice', Math.max(0, r.profitPerOrder), 's-profit']];
     var total = Math.max(r.revHT, seg.reduce(function (a, x) { return a + x[1]; }, 0)) || 1;
@@ -296,6 +338,38 @@
       '<polyline points="' + line + '" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>' +
       (cp ? '<circle cx="' + X(cp.daily) + '" cy="' + Y(cp.net) + '" r="5" fill="var(--card)" stroke="var(--accent)" stroke-width="2.5"/><text class="ax" x="' + X(cp.daily) + '" y="' + (Y(cp.net) + 20) + '" text-anchor="middle">actuel</text>' : '') +
       '<circle cx="' + bx + '" cy="' + Y(best.net) + '" r="5" fill="var(--s-profit)"/><text class="ax" x="' + bx + '" y="' + (Y(best.net) - 10) + '" text-anchor="' + anchor + '">max</text></svg>';
+  }
+
+  /* ----- Suivi réel contre prévision ----- */
+  function today() {
+    var d = new Date(), m = d.getMonth() + 1, j = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (j < 10 ? '0' : '') + j;
+  }
+  function trackView() {
+    var log = cur().log, s = S();
+    if (!log.length) return '<section class="card"><p>Aucune journée saisie. Ajoutez vos dépenses pub, vos commandes et votre chiffre d’affaires du jour : l’application les compare à vos hypothèses et vous dit si le plan tient.</p></section>';
+    var t = DropCalc.tracking(s, log), f = t.forecast;
+    var gap = function (a, b) { return isFinite(a) && b > 0 ? (a / b - 1) : null; };
+    var row = function (l, plan, real, fmt, better) {
+      var g = gap(real, plan), good = g === null ? '' : ((better === 'low' ? g <= 0 : g >= 0) ? 'pos' : 'neg');
+      return '<tr><td>' + l + '</td><td>' + fmt(plan) + '</td><td>' + fmt(real) + '</td><td class="' + good + '">' + (g === null ? '—' : (g > 0 ? '+' : '') + num(g * 100, 0) + ' %') + '</td></tr>';
+    };
+    var cpaGap = gap(t.cpa, f.cpa), msg;
+    if (t.orders === 0) msg = 'Aucune commande sur la période : ' + eur(t.spend) + ' dépensés sans vente.';
+    else if (cpaGap > 0.1) msg = 'Le CPA réel (' + eur(t.cpa) + ') dépasse le plan de ' + num(cpaGap * 100, 0) + ' %. Le résultat réel est ' + eur0(t.net) + ' contre ' + eur0(f.net) + ' prévus : revoyez les créas, le ciblage ou le budget.';
+    else if (cpaGap < -0.1) msg = 'Le CPA réel (' + eur(t.cpa) + ') est meilleur que prévu. Vous pouvez tester une hausse de budget (voir l’onglet Mise à l’échelle).';
+    else msg = 'Le CPA réel (' + eur(t.cpa) + ') est proche du plan. Résultat estimé : ' + eur0(t.net) + ' pour ' + eur0(f.net) + ' prévus.';
+    var list = log.map(function (e) {
+      return '<tr><td>' + esc(new Date(e.date + 'T12:00:00').toLocaleDateString('fr-BE')) + '</td><td>' + eur(e.spend) + '</td><td>' + num(e.orders, 0) + '</td><td>' + eur(e.revenue) +
+        '</td><td><button type="button" data-del="' + e.id + '" aria-label="Supprimer cette journée">×</button></td></tr>';
+    }).join('');
+    return '<section class="card"><div class="verdict ' + (t.net >= f.net ? 'good' : 'bad') + '">' + msg + '</div><div class="wrap"><table><tr><th>Sur ' + t.days + ' jour' + (t.days > 1 ? 's' : '') + '</th><th>Prévu</th><th>Réel</th><th>Écart</th></tr>' +
+      row('Dépense pub', f.spend, t.spend, eur0, 'low') + row('Commandes', f.orders, t.orders, function (v) { return num(v, 0); }, 'high') +
+      row('CPA', f.cpa, t.cpa, eur, 'low') + row('Chiffre d’affaires TTC', f.revenue, t.revenue, eur0, 'high') +
+      row('ROAS', f.roas, t.roas, function (v) { return num(v) + '×'; }, 'high') + row('Résultat avant impôt', f.net, t.net, eur0, 'high') + '</table></div>' +
+      '<p class="note">Le résultat réel utilise votre panier moyen réel (' + eur(t.aov) + ') et prend en compte les coûts fixes au prorata des jours saisis.</p>' +
+      (isFinite(t.cpa) ? '<div class="row noprint"><button id="usecpa" type="button">Utiliser le CPA réel dans les hypothèses</button></div>' : '') + '</section>' +
+      '<section class="card"><h2>Journées saisies</h2><div class="wrap"><table><tr><th>Date</th><th>Pub</th><th>Commandes</th><th>CA TTC</th><th></th></tr>' + list + '</table></div></section>';
   }
 
   /* ----- Comparaison ----- */

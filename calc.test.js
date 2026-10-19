@@ -43,4 +43,22 @@ near(C.maxCpa(base, 0), 60, 'CPA max'); near(C.maxCpa(base, 20), 40, 'CPA max av
 let sc = C.scaleCurve(base, [1, 2]); near(sc[0].net, C.compute(base).net, 'échelle x1');
 sc = C.scaleCurve(Object.assign({}, base, { cpaGrowth: 0 }), [2]); near(sc[0].cpa, 20, 'CPA constant');
 sc = C.scaleCurve(Object.assign({}, base, { cpaGrowth: 100 }), [2]); near(sc[0].cpa, 40, 'CPA x2');
+// Litiges : 10 % de chargebacks avec 15 € de frais => -10 % de CA et -1,50 € par commande.
+r = C.compute(Object.assign({}, base, { chargebackRate: 10, chargebackFee: 15 }));
+near(r.contribution, 60 - 10 - 1.5, 'litiges');
+// Frais de retour : 10 % de remboursements à 4 € de retour.
+r = C.compute(Object.assign({}, base, { refundRate: 10, returnShipping: 4 }));
+near(r.contribution, 60 - 10 - 0.4, 'frais de retour');
+// Le prix minimum reste cohérent avec litiges et retours.
+const extra = Object.assign({}, base, { chargebackRate: 2, chargebackFee: 15, refundRate: 5, returnShipping: 4, payPct: 3 });
+const pm = C.minPrice(extra, 10), cm = C.compute(Object.assign({}, extra, { priceTTC: pm }));
+near(cm.profitPerOrder / cm.revHT, 0.10, 'prix minimum avec litiges');
+
+// Suivi : 2 jours à 100 € de pub et 5 commandes = exactement le plan (CPA 20).
+let tk = C.tracking(base, [{ date: '2026-01-01', spend: 100, orders: 5, revenue: 605 }, { date: '2026-01-02', spend: 100, orders: 5, revenue: 605 }]);
+near(tk.days, 2, 'jours suivis'); near(tk.cpa, 20, 'CPA réel'); near(tk.net, 400, 'net réel'); near(tk.forecast.net, 400, 'net prévu');
+near(tk.forecast.orders, 10, 'commandes prévues');
+tk = C.tracking(base, [{ date: '2026-01-01', spend: 100, orders: 2, revenue: 242 }]);
+near(tk.cpa, 50, 'CPA réel mauvais'); assert(tk.net < tk.forecast.net, 'écart négatif');
+tk = C.tracking(base, []); assert(tk.days === 0 && tk.cpa === Infinity);
 console.log('OK');
