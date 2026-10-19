@@ -27,12 +27,19 @@
     var inputs = fresh();
     try { Object.assign(inputs, JSON.parse(localStorage.getItem(OLD) || '{}')); } catch (e) {}
     var id = uid();
-    return { current: id, tab: 'calc', cmp: [], items: [{ id: id, name: 'Produit 1', inputs: inputs, log: [] }] };
+    return { current: id, tab: 'calc', cmp: [], deleted: {}, items: [{ id: id, name: 'Produit 1', inputs: inputs, log: [], updated: 0 }] };
   }
   var db = load();
-  db.items.forEach(function (x) { x.inputs = Object.assign(fresh(), x.inputs); x.log = x.log || []; });
+  db.deleted = db.deleted || {};
+  db.items.forEach(function (x) { x.inputs = Object.assign(fresh(), x.inputs); x.log = x.log || []; x.updated = x.updated || 0; x._sig = DropSync.sig(x); });
   if (!db.items.some(function (x) { return x.id === db.current; })) db.current = db.items[0].id;
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
+  function persist() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
+  // Chaque modification réelle du produit courant met à jour son horodatage (sert à la fusion entre appareils).
+  function save() {
+    var it = cur(), sg = DropSync.sig(it);
+    if (it._sig !== sg) { it._sig = sg; it.updated = Date.now(); }
+    persist(); scheduleSync();
+  }
   function cur() { return db.items.filter(function (x) { return x.id === db.current; })[0] || db.items[0]; }
   function S() { return cur().inputs; }
 
@@ -106,10 +113,10 @@
     renderPrintHead(); if (db.tab === 'compare') render();
   };
   $('bnew').onclick = function () {
-    var id = uid(); db.items.push({ id: id, name: 'Produit ' + (db.items.length + 1), inputs: fresh(), log: [] }); switchTo(id);
+    var id = uid(); db.items.push({ id: id, name: 'Produit ' + (db.items.length + 1), inputs: fresh(), log: [], updated: Date.now() }); switchTo(id);
   };
   $('bdup').onclick = function () {
-    var id = uid(); db.items.push({ id: id, name: (cur().name || 'Produit') + ' (copie)', inputs: Object.assign({}, S()), log: [] }); switchTo(id);
+    var id = uid(); db.items.push({ id: id, name: (cur().name || 'Produit') + ' (copie)', inputs: Object.assign({}, S()), log: [], updated: Date.now() }); switchTo(id);
   };
   var delTimer;
   $('bdel').onclick = function () {
@@ -120,6 +127,7 @@
     }
     disarm();
     if (db.items.length === 1) { cur().inputs = fresh(); cur().name = 'Produit 1'; save(); switchTo(db.current); return; }
+    db.deleted[db.current] = Date.now();
     db.items = db.items.filter(function (x) { return x.id !== db.current; });
     switchTo(db.items[0].id);
   };
@@ -258,7 +266,7 @@
         backupMsg('Fichier de sauvegarde non reconnu.', true); return;
       }
       d.items.forEach(function (x) {
-        db.items.push({ id: uid(), name: String(x.name || 'Produit importé').slice(0, 60), inputs: Object.assign(fresh(), x.inputs),
+        db.items.push({ id: uid(), updated: Date.now(), name: String(x.name || 'Produit importé').slice(0, 60), inputs: Object.assign(fresh(), x.inputs),
           log: (Array.isArray(x.log) ? x.log : []).filter(function (e) { return e && /^\d{4}-\d{2}-\d{2}$/.test(e.date); })
             .map(function (e) { return { id: uid(), date: e.date, spend: +e.spend || 0, orders: +e.orders || 0, revenue: +e.revenue || 0 }; }) });
       });
@@ -266,6 +274,81 @@
       backupMsg(d.items.length + ' produit(s) ajouté(s) à votre liste.');
     });
   };
+
+  /* ---------- Compte et synchronisation (Supabase) ---------- */
+  var cfgd = window.RENTAB_CONFIG || {};
+  var store = (function () { try { localStorage.getItem('x'); return localStorage; } catch (e) { var m = {}; return { getItem: function (k) { return m[k] || null; }, setItem: function (k, v) { m[k] = v; }, removeItem: function (k) { delete m[k]; } }; } })();
+  var cloud = DropSync.client(cfgd, store, function (u, o) { return window.fetch(u, o); });
+  var sync = { busy: false, again: false, timer: null, at: null, error: '', msg: '' };
+
+  function hhmm(d) { return d.toLocaleTimeString('fr-BE', { hour: '2-digit', minute: '2-digit' }); }
+  // Affiche un message sans reconstruire le formulaire (pour ne pas effacer ce que la personne a saisi).
+  function say(m) { sync.msg = m; var el = $('amsg'); if (el) el.textContent = m; }
+  function renderAcct() {
+    var box = $('acct'); if (!cloud.configured) { box.hidden = true; return; }
+    box.hidden = false;
+    var s = cloud.session(), h;
+    if (s) {
+      var st = sync.busy ? 'Synchronisation…' : sync.error ? '<span class="neg">' + esc(sync.error) + '</span>' : sync.at ? 'Synchronisé à ' + hhmm(sync.at) : 'En attente de synchronisation';
+      h = '<div class="acctrow"><span>Connecté : <b>' + esc(s.user.email || '') + '</b> · ' + st + '</span><span class="row">' +
+        '<button id="async" type="button">Synchroniser</button><button id="aout" type="button">Se déconnecter</button></span></div>';
+    } else {
+      h = '<div class="acctrow"><span><b>Compte</b> : retrouvez vos produits sur tous vos appareils.</span></div><div class="acctform">' +
+        '<label>E-mail<input id="aemail" type="email" autocomplete="username" inputmode="email"></label>' +
+        '<label>Mot de passe<input id="apass" type="password" autocomplete="current-password"></label>' +
+        '<span class="row"><button id="ain" type="button">Se connecter</button><button id="aup" type="button">Créer un compte</button>' +
+        '<button id="arec" type="button">Mot de passe oublié</button></span></div>';
+    }
+    box.innerHTML = h + '<p id="amsg" class="note" role="status">' + esc(sync.msg) + '</p>';
+    var on = function (id, fn) { var b = $(id); if (b) b.onclick = fn; };
+    on('async', function () { syncNow(); });
+    on('aout', function () { cloud.signOut().then(function () { sync.at = null; sync.error = ''; sync.msg = 'Déconnecté. Vos données restent sur cet appareil.'; renderAcct(); }); });
+    var creds = function () { return [$('aemail').value.trim(), $('apass').value]; };
+    var fail = function (e) { say(e.message); };
+    on('ain', function () { var c = creds(); if (!c[0] || !c[1]) { say('Saisissez votre e-mail et votre mot de passe.'); return; }
+      cloud.signIn(c[0], c[1]).then(function () { say(''); syncNow(); }, fail); });
+    on('aup', function () { var c = creds(); if (!c[0] || !c[1]) { say('Saisissez un e-mail et un mot de passe (6 caractères minimum).'); return; }
+      cloud.signUp(c[0], c[1]).then(function (r) {
+        if (r.session) { say(''); syncNow(); }
+        else { say('Compte créé. Ouvrez le lien reçu par e-mail pour le confirmer, puis connectez-vous.'); }
+      }, fail); });
+    on('arec', function () { var e = $('aemail').value.trim(); if (!e) { say('Saisissez votre e-mail ci-dessus.'); return; }
+      cloud.recover(e).then(function () { say('Si un compte existe pour cet e-mail, un lien de réinitialisation vient d’être envoyé.'); }, fail); });
+  }
+  function scheduleSync() {
+    if (!cloud.configured || !cloud.session()) return;
+    clearTimeout(sync.timer); sync.timer = setTimeout(syncNow, 2000);
+  }
+  function exportable() {
+    return { items: db.items.map(function (x) { var c = Object.assign({}, x); delete c._sig; return c; }), deleted: db.deleted };
+  }
+  // Tire les données du serveur, les fusionne avec les locales, puis renvoie le résultat.
+  function syncNow() {
+    if (!cloud.configured || !cloud.session()) return;
+    if (sync.busy) { sync.again = true; return; }
+    clearTimeout(sync.timer); sync.busy = true; sync.error = ''; renderAcct();
+    cloud.pull().then(function (remote) {
+      var before = JSON.stringify(db.items.map(function (x) { return [x.id, x.updated]; }));
+      var m = DropSync.merge(exportable(), remote);
+      if (!m.items.length) m.items = [{ id: uid(), name: 'Produit 1', inputs: fresh(), log: [], updated: Date.now() }];
+      m.items.forEach(function (x) { x.inputs = Object.assign(fresh(), x.inputs); x.log = x.log || []; x.updated = x.updated || 0; x._sig = DropSync.sig(x); });
+      db.items = m.items; db.deleted = m.deleted;
+      if (!db.items.some(function (x) { return x.id === db.current; })) db.current = db.items[0].id;
+      persist();
+      var changed = before !== JSON.stringify(db.items.map(function (x) { return [x.id, x.updated]; }));
+      return cloud.push(exportable()).then(function () { return changed; });
+    }).then(function (changed) {
+      sync.at = new Date(); sync.busy = false;
+      if (changed) { buildScenarios(); buildInputs(); buildTab(); render(); }
+      renderAcct();
+    }, function (e) {
+      sync.busy = false; sync.error = e.offline ? 'Hors ligne : vos modifications seront envoyées plus tard.' : e.message;
+      if (!cloud.session()) sync.msg = e.message;
+      renderAcct();
+    }).then(function () { if (sync.again) { sync.again = false; syncNow(); } });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) syncNow(); });
+  window.addEventListener('online', function () { syncNow(); });
 
   /* ---------- Rendu ---------- */
   function render() {
@@ -497,7 +580,7 @@
     a.download = 'rentabilite-' + (cur().name || 'produit').replace(/[^\w-]+/g, '_') + '.csv'; a.click();
   }
 
-  buildScenarios(); buildInputs(); buildTab(); render();
+  buildScenarios(); buildInputs(); buildTab(); render(); renderAcct(); syncNow();
 
   /*SW*/
   if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(function () {});

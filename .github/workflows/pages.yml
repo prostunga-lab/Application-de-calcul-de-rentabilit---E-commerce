@@ -29,10 +29,11 @@ jobs:
         run: |
           node calc.test.js
           node importer.test.js
+          node sync.test.js
       - name: Préparation du site
         run: |
           mkdir _site
-          cp -r index.html style.css calc.js importer.js app.js sw.js manifest.webmanifest icons _site/
+          cp -r index.html style.css calc.js importer.js sync.js config.js app.js sw.js manifest.webmanifest icons _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
