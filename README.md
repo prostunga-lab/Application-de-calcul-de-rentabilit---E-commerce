@@ -1,4 +1,4 @@
-# Calculateur de rentabilité Dropshipping + Meta Ads
+# Calcul rentabilité E-commerce et Meta ads
 
 Application web statique, sans dépendance : ouvrez `index.html` dans un navigateur.
 
