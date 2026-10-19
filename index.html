@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rentabilité Dropshipping</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1a1d23;--muted:#6b7280;--line:#e3e6ea;--accent:#2563eb;--good:#15803d;--bad:#b91c1c;--goodbg:#dcfce7;--badbg:#fee2e2}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--text:#e8eaed;--muted:#9aa1ad;--line:#2a2f38;--accent:#6ea0ff;--good:#4ade80;--bad:#f87171;--goodbg:#10301c;--badbg:#3b1616}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:20px 16px 4px;max-width:1200px;margin:auto}
+h1{margin:0;font-size:22px} header p{margin:4px 0 0;color:var(--muted)}
+main{max-width:1200px;margin:auto;padding:16px;display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+label{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--muted)}
+input,select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;width:100%}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.full{grid-column:1/-1}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi span{display:block;font-size:12px;color:var(--muted)} .kpi b{font-size:20px}
+.kpi.good{background:var(--goodbg)} .kpi.bad{background:var(--badbg)}
+.good b,.pos{color:var(--good)} .bad b,.neg{color:var(--bad)}
+.verdict{padding:12px 14px;border-radius:10px;font-weight:600;margin-bottom:12px}
+.verdict.good{background:var(--goodbg);color:var(--good)} .verdict.bad{background:var(--badbg);color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right}
+td:first-child,th:first-child{text-align:left}
+.sens td,.sens th{text-align:center;font-size:12.5px;padding:5px 4px}
+.wrap{overflow-x:auto}
+.right{display:flex;flex-direction:column;gap:16px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer}
+small,.note{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rentabilité Dropshipping + Meta Ads</h1>
+  <p>Modifiez les hypothèses : tout est recalculé instantanément et sauvegardé dans votre navigateur.</p>
+</header>
+<main>
+  <section class="card" id="inputs"></section>
+  <div class="right">
+    <section class="card"><div id="verdict"></div><div class="kpis" id="kpis"></div></section>
+    <section class="card"><h2>Économie unitaire (par commande)</h2><table id="unit"></table></section>
+    <section class="card"><h2>Projection mensuelle</h2><table id="month"></table></section>
+    <section class="card"><h2>Sensibilité : bénéfice net mensuel (CVR × CPM)</h2>
+      <div class="wrap"><table class="sens" id="sens"></table></div>
+      <p class="note">Même budget, mêmes coûts ; seuls le taux de conversion (clic → achat) et le CPM varient. Les autres hypothèses viennent de la colonne de gauche (CTR en mode entonnoir).</p></section>
+  </div>
+</main>
+<script src="calc.js"></script>
+<script>
+const D = DropCalc.DEFAULTS, KEY = 'dropcalc.v1';
+const FIELDS = [
+ ['Produit & prix', [
+  ['priceTTC','Prix de vente TTC (€)'],['shippingCharged','Livraison facturée TTC (€)'],
+  ['vat','TVA (%)'],['refundRate','Remboursements / retours (%)'],
+  ['productCost','Coût produit fournisseur (€)'],['supplierShipping','Livraison fournisseur (€)'],
+  ['costRecovery','Coût récupéré sur retours (%)'],['otherPerOrder','Autres coûts / commande (€)']]],
+ ['Frais de paiement & plateforme', [
+  ['payPct','Paiement : % du TTC'],['payFixed','Paiement : fixe / transaction (€)'],
+  ['platformPct','Commission boutique (% du TTC)']]],
+ ['Meta Ads', [
+  ['adMode','Mode de calcul du CPA','select'],
+  ['cpm','CPM (€ / 1000 impressions)','funnel'],['ctr','CTR lien (%)','funnel'],
+  ['cvr','Conversion clic → achat (%)','funnel'],['cpaDirect','CPA constaté (€)','direct'],
+  ['dailyBudget','Budget pub / jour (€)'],['days','Jours / mois']]],
+ ['Structure', [
+  ['fixedMonthly','Coûts fixes mensuels (€)'],['taxRate','Impôt sur le bénéfice (%)']]]
+];
+let S = Object.assign({}, D);
+try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+
+const $ = id => document.getElementById(id);
+const eur = v => isFinite(v) ? v.toLocaleString('fr-BE',{style:'currency',currency:'EUR',maximumFractionDigits:2}) : '∞';
+const num = (v,d=2) => isFinite(v) ? v.toLocaleString('fr-BE',{maximumFractionDigits:d}) : '∞';
+const pct = v => isFinite(v) ? (v*100).toLocaleString('fr-BE',{maximumFractionDigits:1})+' %' : '—';
+const cls = v => v >= 0 ? 'pos' : 'neg';
+
+function buildInputs() {
+  $('inputs').innerHTML = FIELDS.map(([title, fs]) =>
+    `<h2 style="margin-top:14px">${title}</h2><div class="grid">` + fs.map(([k,l,t]) => {
+      if (t === 'select') return `<label class="full">${l}<select data-k="${k}">
+        <option value="funnel">Entonnoir (CPM, CTR, conversion)</option>
+        <option value="direct">CPA saisi directement</option></select></label>`;
+      return `<label data-mode="${t||''}">${l}<input type="number" step="any" data-k="${k}"></label>`;
+    }).join('') + '</div>').join('') +
+    `<div class="row"><button id="reset">Réinitialiser</button><button id="csv">Exporter CSV</button></div>
+     <p class="note">Hypothèses indicatives (Belgique, TVA 21 %). Les montants fournisseur sont supposés HT, sans TVA d'import. Ceci n'est pas un conseil comptable.</p>`;
+  document.querySelectorAll('[data-k]').forEach(el => {
+    el.value = S[el.dataset.k];
+    el.addEventListener('input', () => {
+      S[el.dataset.k] = el.tagName === 'SELECT' ? el.value : el.value === '' ? 0 : parseFloat(el.value);
+      try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+      render();
+    });
+  });
+  $('reset').onclick = () => { S = Object.assign({}, D); try{localStorage.removeItem(KEY);}catch(e){} buildInputs(); render(); };
+  $('csv').onclick = exportCsv;
+}
+
+function render() {
+  const r = DropCalc.compute(S);
+  document.querySelectorAll('[data-mode]').forEach(l => {
+    const m = l.dataset.mode; l.style.display = (!m || m === S.adMode) ? '' : 'none';
+  });
+  const ok = r.profitPerOrder > 0 && r.net > 0;
+  $('verdict').innerHTML = `<div class="verdict ${ok?'good':'bad'}">${
+    r.contribution <= 0 ? 'Marge avant pub négative : le prix ne couvre pas les coûts, aucune pub ne pourra l’améliorer.' :
+    r.profitPerOrder <= 0 ? `Non rentable : le CPA (${eur(r.cpa)}) dépasse votre CPA limite (${eur(r.beCpa)}).` :
+    r.net <= 0 ? 'Rentable à la commande mais pas assez pour couvrir les coûts fixes à ce budget.' :
+    `Rentable : ${eur(r.net)} de bénéfice net estimé par mois.`}</div>`;
+  const k = (l,v,c='') => `<div class="kpi ${c}"><span>${l}</span><b>${v}</b></div>`;
+  $('kpis').innerHTML =
+    k('ROAS actuel', num(r.roas)+'×', r.roas >= r.beRoas ? 'good':'bad') +
+    k('ROAS point mort', num(r.beRoas)+'×') +
+    k('CPA actuel', eur(r.cpa)) + k('CPA limite', eur(r.beCpa)) +
+    k('Bénéfice / commande', eur(r.profitPerOrder), r.profitPerOrder>=0?'good':'bad') +
+    k('Bénéfice net / mois', eur(r.net), r.net>=0?'good':'bad');
+  const t = (l,v,c='') => `<tr><td>${l}</td><td class="${c}">${v}</td></tr>`;
+  $('unit').innerHTML =
+    t('Encaissé TTC', eur(r.revTTC)) + t('Chiffre d’affaires HT', eur(r.revHT)) +
+    t(`Remboursements (${num(S.refundRate)} %)`, '− ' + eur(r.revHT - r.netRevenue)) +
+    t('Coût produit + livraison fournisseur', '− ' + eur(r.productCosts)) +
+    t('Frais de paiement', '− ' + eur(r.payFees)) + t('Commission boutique', '− ' + eur(r.platformFees)) +
+    t('Autres coûts', '− ' + eur(r.other)) +
+    `<tr><th>Marge avant pub (${pct(r.contributionPct)})</th><th class="${cls(r.contribution)}">${eur(r.contribution)}</th></tr>` +
+    t('Coût d’acquisition Meta (CPA)', '− ' + eur(r.cpa)) +
+    (r.cpc !== null ? t('dont coût par clic (CPC)', eur(r.cpc), '') : '') +
+    `<tr><th>Bénéfice par commande</th><th class="${cls(r.profitPerOrder)}">${eur(r.profitPerOrder)}</th></tr>`;
+  $('month').innerHTML =
+    t('Budget pub', eur(r.spend)) + t('Commandes estimées', num(r.orders,0)) +
+    t('Chiffre d’affaires TTC', eur(r.revenueTTC)) +
+    t('Marge avant pub totale', eur(r.orders * r.contribution)) +
+    t('Dépenses publicitaires', '− ' + eur(r.spend)) + t('Coûts fixes', '− ' + eur(S.fixedMonthly)) +
+    t('Résultat avant impôt', eur(r.preTax), cls(r.preTax)) + t('Impôt', '− ' + eur(r.tax)) +
+    `<tr><th>Bénéfice net (marge ${pct(r.netMarginPct)})</th><th class="${cls(r.net)}">${eur(r.net)}</th></tr>` +
+    t('Commandes pour couvrir les coûts fixes', num(r.ordersToBE,0)) + t('ROI sur budget pub', pct(r.monthlyRoi));
+  renderSens();
+}
+
+function renderSens() {
+  const cvrs = [1,1.5,2,2.5,3,4,5], cpms = [6,8,10,12,15,20,25];
+  let h = '<tr><th>CVR \\ CPM</th>' + cpms.map(c => `<th>${c} €</th>`).join('') + '</tr>';
+  cvrs.forEach(v => {
+    h += `<tr><th>${v} %</th>` + cpms.map(c => {
+      const x = DropCalc.compute(Object.assign({}, S, {adMode:'funnel', cvr:v, cpm:c})).net;
+      const a = Math.min(1, Math.abs(x) / 3000) * .55 + .08;
+      const col = x >= 0 ? `rgba(34,197,94,${a})` : `rgba(239,68,68,${a})`;
+      return `<td style="background:${col}">${Math.round(x).toLocaleString('fr-BE')}</td>`;
+    }).join('') + '</tr>';
+  });
+  $('sens').innerHTML = h;
+}
+
+function exportCsv() {
+  const r = DropCalc.compute(S);
+  const rows = [['Paramètre','Valeur']].concat(Object.entries(S), [['—','—']], Object.entries(r).map(([k,v]) => [k, isFinite(v) ? +v.toFixed(4) : 'inf']));
+  const blob = new Blob([rows.map(x => x.join(';')).join('\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'rentabilite.csv'; a.click();
+}
+
+buildInputs(); render();
+</script>
+</body>
+</html>
